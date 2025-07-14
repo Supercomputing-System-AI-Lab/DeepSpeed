@@ -125,7 +125,7 @@ def get_numactl_cmd(bind_core_list, num_local_procs, local_rank):
     numa_cores = get_numa_cores()
     num_numas = len(numa_cores)
 
-    numa_mode = "normal"
+    numa_mode = "superoffload"
 
     non_empty_numa_list = []
     empty_numa_list = []

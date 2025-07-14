@@ -236,6 +236,70 @@ int ds_adam_step(int optimizer_id,
     return 0;
 }
 
+void adamw_rollback_inplace(float* params, float* grads, float* m, float* v, size_t param_size,
+                            float lr, float beta1, float beta2, float eps, float weight_decay, int& t) {
+    float gamma = lr;
+    float lambda = weight_decay;
+    float beta1_pow = std::pow(beta1, t);
+    float beta2_pow = std::pow(beta2, t);
+    float one_minus_beta1 = 1.0f - beta1;
+    float one_minus_beta2 = 1.0f - beta2;
+
+    float gamma_lambda = gamma * lambda;
+    float one_minus_gamma_lambda = 1.0f - gamma_lambda;
+
+    #pragma omp parallel for
+    for (size_t i = 0; i < param_size; ++i) {
+
+        float denom_beta1 = 1.0f - beta1_pow;
+        float denom_beta2 = 1.0f - beta2_pow;
+
+        float m_hat = m[i] / denom_beta1;
+        float v_hat = v[i] / denom_beta2;
+
+        float denom = std::sqrt(v_hat) + eps;
+
+        // Param rollback
+        float update = gamma * m_hat / denom;
+        float new_param = (params[i] + update) / one_minus_gamma_lambda;
+
+        // Detect numerical errors
+        if (!std::isfinite(new_param)) {
+            new_param = 0.0f;  // optional fallback
+        }
+
+        params[i] = new_param;
+
+        // Rollback Momentum and Variance
+        m[i] = (m[i] - one_minus_beta1 * grads[i]) / beta1;
+        v[i] = (v[i] - one_minus_beta2 * grads[i] * grads[i]) / beta2;
+    }
+    t -= 1;
+}
+
+int ds_adam_rollback(int optimizer_id,
+                     size_t step,
+                     float lr,
+                     float beta1,
+                     float beta2,
+                     float epsilon,
+                     float weight_decay,
+                     bool bias_correction,
+                     torch::Tensor& params,
+                     torch::Tensor& grads,
+                     torch::Tensor& exp_avg,
+                     torch::Tensor& exp_avg_sq)
+{
+    float* params_ptr = params.data_ptr<float>();
+    float* grads_ptr = grads.data_ptr<float>();
+    float* m_ptr = exp_avg.data_ptr<float>();
+    float* v_ptr = exp_avg_sq.data_ptr<float>();
+    size_t param_size = params.numel();
+    int t = static_cast<int>(step);
+    adamw_rollback_inplace(params_ptr, grads_ptr, m_ptr, v_ptr, param_size, lr, beta1, beta2, epsilon, weight_decay, t);
+    return 0;
+}
+
 int destroy_adam_optimizer(int optimizer_id)
 {
     s_optimizers.erase(optimizer_id);

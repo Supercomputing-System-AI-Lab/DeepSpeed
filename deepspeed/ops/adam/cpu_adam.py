@@ -107,7 +107,7 @@ class DeepSpeedCPUAdam(torch.optim.Optimizer):
             group.setdefault('amsgrad', False)
 
     @torch.no_grad()
-    def step(self, closure=None):
+    def step(self, sub_group_id, closure=None):
         """Update the model parameters.
 
         .. note::
@@ -131,7 +131,7 @@ class DeepSpeedCPUAdam(torch.optim.Optimizer):
 
         # intended device for step
         device = torch.device('cpu')
-
+        # print(f"---- Begin Update for sub_group_id: {sub_group_id} ----")
         for group_id, group in enumerate(self.param_groups):
             for param_id, p in enumerate(group['params']):
 
@@ -141,7 +141,7 @@ class DeepSpeedCPUAdam(torch.optim.Optimizer):
                 assert p.device == device, f"CPUAdam param is on {p.device} and must be 'cpu', make " \
                         "sure you enabled 'offload_optimizer': 'cpu' in your ZeRO config."
 
-                state = self.state[p]
+                state = self.state[sub_group_id]
                 # State initialization
                 if len(state) == 0:
                     #print(f'group {group_id} param {param_id} = {p.numel()}')
@@ -159,8 +159,40 @@ class DeepSpeedCPUAdam(torch.optim.Optimizer):
 
                 state['step'] += 1
                 beta1, beta2 = group['betas']
-
                 self.ds_opt_adam.adam_update(self.opt_id, state['step'], group['lr'], beta1, beta2, group['eps'],
+                                             group['weight_decay'], group['bias_correction'], p.data, p.grad.data,
+                                             state['exp_avg'], state['exp_avg_sq'])
+        return loss
+
+
+    @torch.no_grad()
+    def rollback(self, sub_group_id, closure=None):
+
+        loss = None
+        if closure is not None:
+            with torch.enable_grad():
+                loss = closure()
+
+        # intended device for step
+        device = torch.device('cpu')
+        for group_id, group in enumerate(self.param_groups):
+            for param_id, p in enumerate(group['params']):
+
+                if p.grad is None:
+                    continue
+
+                assert p.device == device, f"CPUAdam param is on {p.device} and must be 'cpu', make " \
+                        "sure you enabled 'offload_optimizer': 'cpu' in your ZeRO config."
+
+                state = self.state[sub_group_id]
+                # State initialization
+                if len(state) == 0:
+                    raise RuntimeError(
+                        f"Cannot rollback optimizer state for sub_group_id {sub_group_id} as it has not been initialized.")
+
+                state['step'] -= 1
+                beta1, beta2 = group['betas']
+                self.ds_opt_adam.adam_rollback(self.opt_id, state['step'], group['lr'], beta1, beta2, group['eps'],
                                              group['weight_decay'], group['bias_correction'], p.data, p.grad.data,
                                              state['exp_avg'], state['exp_avg_sq'])
         return loss

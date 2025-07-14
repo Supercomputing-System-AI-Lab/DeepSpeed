@@ -524,7 +524,7 @@ class CheckpointFunction(torch.autograd.Function):
 
         cuda_device = get_accelerator().current_device_name()
         transport_stream = get_accelerator().Stream(device=cuda_device)
-
+        # print("PARTITION_ACTIVATIONS: ", PARTITION_ACTIVATIONS, "CPU_CHECKPOINT: ", CPU_CHECKPOINT, "CONTIGUOUS_CHECKPOINTING: ", CONTIGUOUS_CHECKPOINTING)
         if PARTITION_ACTIVATIONS:
             inputs = partition_activations(args, CPU_CHECKPOINT, CONTIGUOUS_CHECKPOINTING)
         elif CPU_CHECKPOINT:
