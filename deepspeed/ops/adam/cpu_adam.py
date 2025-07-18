@@ -96,10 +96,11 @@ class DeepSpeedCPUAdam(torch.optim.Optimizer):
         self.ds_opt_adam.create_adam(self.opt_id, lr, betas[0], betas[1], eps, weight_decay, adamw_mode,
                                      should_log_le("info"))
 
-    def __del__(self):
+    # def __del__(self):
         # need to destroy the C++ object explicitly to avoid a memory leak when deepspeed.initialize
         # is used multiple times in the same process (notebook or pytest worker)
-        self.ds_opt_adam.destroy_adam(self.opt_id)
+        # if hasattr(self, "ds_opt_adam") and self.ds_opt_adam is not None:
+            # self.ds_opt_adam.destroy_adam(self.opt_id)
 
     def __setstate__(self, state):
         super(DeepSpeedCPUAdam, self).__setstate__(state)
