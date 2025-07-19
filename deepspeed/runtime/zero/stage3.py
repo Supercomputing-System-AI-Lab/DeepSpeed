@@ -114,7 +114,7 @@ def optimizer_process_worker(param_queue: mp.SimpleQueue,
                            optimizer_config: Dict):
     """Worker process that creates optimizer and processes parameters"""
 
-    torch.set_num_threads(72) 
+    torch.set_num_threads(210) 
     cpu_tensor = torch.randn(1, device="cpu")
     cpu_param = torch.nn.Parameter(cpu_tensor)
     
@@ -201,7 +201,8 @@ class ProcessPoolDeepSpeedOptimizer:
         import psutil
         self.process.start()
         try:
-            psutil.Process(self.process.pid).cpu_affinity(list(range(72, 144)))
+            os.environ["OMP_NUM_THREADS"] = "210"
+            psutil.Process(self.process.pid).cpu_affinity(list(range(72, 288)))
         except Exception as e:
             logger.warning(f"Could not set CPU affinity for optimizer process: {e}")
         
@@ -388,7 +389,7 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
                 "weight_decay": self.optimizer.param_groups[0]["weight_decay"],
                 "amsgrad": self.optimizer.param_groups[0]["amsgrad"]
             }
-            os.environ["OMP_NUM_THREADS"] = "72"
+            os.environ["OMP_NUM_THREADS"] = "210"
             os.sched_setaffinity(0, list(range(0, 72)))
             self.process_pool_optimizer = ProcessPoolDeepSpeedOptimizer(
                 optimizer_config=optimizer_config
@@ -579,6 +580,8 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
         self._link_all_hp_params()
 
         self.offloaded_states: Set(OffloadDeviceEnum) = set()
+
+        self._cur_bucket_index = -1
 
         if dist.get_rank(group=self.dp_process_group) == 0:
             see_memory_usage(f"After initializing ZeRO optimizer", force=True)
@@ -1110,7 +1113,6 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
                 sub_group = []
                 local_sub_group_size = 0
 
-        self._prev_bucket_index = len(sub_groups) - 1
         return sub_groups
 
     def _release_ipg_buffers(self):
@@ -1419,22 +1421,27 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
         # empty, while reduction_list will have that garbage data.
 
         i, _, _ = self.grad_position[self.get_param_id(param)]
-
-        if self._prev_bucket_index != i:
-            if self.sub_group_to_param_num[self._prev_bucket_index] == len(self.params_in_ipg_bucket):
-                self.report_ipg_memory_usage("In ipg_remove_grads before reduce_ipg_grads", param.ds_numel)
-
+        # print(f"param {param.ds_id} subgroup index {i} self._cur_bucket_index {self._cur_bucket_index} params_in_ipg_bucket {len(self.params_in_ipg_bucket)}")
+        if len(self.params_in_ipg_bucket) == 0:
+            # print(f"param {param.ds_id} subgroup index {i} is the first in the bucket, adding it")
+            self._cur_bucket_index = i
+            self.__add_grad_to_ipg_bucket(param)
+            if self.sub_group_to_param_num[self._cur_bucket_index] == 1:
                 self.__reduce_and_partition_ipg_grads()
-                self._prev_bucket_index = i
-                self.__add_grad_to_ipg_bucket(param)
-
-                while self.params_in_ipg_bucket_buffer:
-                    buffered_param = self.params_in_ipg_bucket_buffer.pop(0)
-                    self.__add_grad_to_ipg_bucket(buffered_param)
-            else:
-                self.params_in_ipg_bucket_buffer.append(param)
+        elif i != self._cur_bucket_index:
+            self.params_in_ipg_bucket_buffer.append(param)
+            # print(f"param {param.ds_id} subgroup index {i} not ready, buffering it")
         else:
             self.__add_grad_to_ipg_bucket(param)
+            # print(f"add param {param.ds_id} subgroup index {i} to ipg bucket, current bucket size {len(self.params_in_ipg_bucket)}")
+            if self.sub_group_to_param_num[self._cur_bucket_index] == len(self.params_in_ipg_bucket):
+                self.__reduce_and_partition_ipg_grads()
+                # print(f"param {param.ds_id} subgroup index {i} ready, reducing it")
+                while self.params_in_ipg_bucket_buffer:
+                    buffered_param = self.params_in_ipg_bucket_buffer.pop(0)
+                    ci, _, _ = self.grad_position[self.get_param_id(buffered_param)]
+                    self._cur_bucket_index = ci
+                    self.__add_grad_to_ipg_bucket(buffered_param)
 
 
     @instrument_w_nvtx
