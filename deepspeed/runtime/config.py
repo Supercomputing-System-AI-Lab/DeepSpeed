@@ -12,6 +12,7 @@ import json
 import hjson
 import copy
 import base64
+import math
 
 from .constants import *
 from .config_utils import (
@@ -889,6 +890,11 @@ class DeepSpeedConfig(object):
         train_batch = self.train_batch_size
         micro_batch = self.train_micro_batch_size_per_gpu
         grad_acc = self.gradient_accumulation_steps
+
+        aligned_train_batch = math.ceil(train_batch / micro_batch) * micro_batch
+        self.real_train_batch_size = train_batch
+        self.train_batch_size = aligned_train_batch
+        train_batch = self.train_batch_size
 
         #print(f"in: train_batch = {train_batch}, micro_batch={micro_batch}")
 
