@@ -201,8 +201,8 @@ class ProcessPoolDeepSpeedOptimizer:
         import psutil
         self.process.start()
         try:
-            os.environ["OMP_NUM_THREADS"] = "210"
-            psutil.Process(self.process.pid).cpu_affinity(list(range(72, 288)))
+            os.environ["OMP_NUM_THREADS"] = "68"
+            psutil.Process(self.process.pid).cpu_affinity(list(range(4, 72)))
         except Exception as e:
             logger.warning(f"Could not set CPU affinity for optimizer process: {e}")
         
@@ -389,8 +389,8 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
                 "weight_decay": self.optimizer.param_groups[0]["weight_decay"],
                 "amsgrad": self.optimizer.param_groups[0]["amsgrad"]
             }
-            os.environ["OMP_NUM_THREADS"] = "210"
-            os.sched_setaffinity(0, list(range(0, 72)))
+            # os.environ["OMP_NUM_THREADS"] = "36"
+            # os.sched_setaffinity(0, list(range(0, 36)))
             self.process_pool_optimizer = ProcessPoolDeepSpeedOptimizer(
                 optimizer_config=optimizer_config
             )
